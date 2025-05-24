@@ -75,12 +75,39 @@ int getip(char *host, char *ip) {
         return -1;
     }
     
-    // Convert the first address in h_addr_list to a string
     struct in_addr addr;
     memcpy(&addr, h->h_addr_list[0], sizeof(struct in_addr));
     strcpy(ip, inet_ntoa(addr));
     
     return 0;
+}
+
+int connect_to_server(char *ip, int port) {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    
+    /*server address handling*/
+    bzero((char *) &server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(ip);    /*32 bit Internet address network byte ordered*/
+    server_addr.sin_port = htons(port);             /*server TCP port must be network byte ordered */
+    
+    /*open a TCP socket*/
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("socket()");
+        return -1;
+    }
+    
+    /*connect to the server*/
+    if (connect(sockfd, 
+                (struct sockaddr *) &server_addr,
+                sizeof(server_addr)) < 0) {
+        perror("connect()");
+        close(sockfd);
+        return -1;
+    }
+    
+    return sockfd;
 }
 
 int main(int argc, char *argv[]) {
@@ -109,6 +136,14 @@ int main(int argc, char *argv[]) {
         printf("IP Address of %s: %s\n", host, ip);
     } else {
         printf("Failed to get IP address for host %s\n", host);
+    }
+
+    int sockfd = connect_to_server(ip, 21); // FTP default port is 21
+    if (sockfd < 0) {
+        printf("Failed to connect to server %s on port 21\n", ip);
+    } else {
+        printf("Connected to server %s on port 21\n", ip);
+        close(sockfd); // Close the socket after use
     }
 
     return 0;
