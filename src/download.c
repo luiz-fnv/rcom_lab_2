@@ -65,6 +65,24 @@ int parse(char *url, char *user, char *password, char *host, char *path, char *f
     return 0;
 }
 
+int getip(char *host, char *ip) {
+    // Gets the IP address from the hostname
+    struct hostent *h;
+    
+    h = gethostbyname(host);
+    if (h == NULL) {
+        herror("gethostbyname");
+        return -1;
+    }
+    
+    // Convert the first address in h_addr_list to a string
+    struct in_addr addr;
+    memcpy(&addr, h->h_addr_list[0], sizeof(struct in_addr));
+    strcpy(ip, inet_ntoa(addr));
+    
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 
     if(argc < 2) {
@@ -72,7 +90,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    char user[256], password[256], host[256], path[256], filename[256];
+    char user[256], password[256], host[256], path[256], filename[256], ip[16];
 
     int result = parse(argv[1], user, password, host, path, filename);
     if (result == 0) {
@@ -84,6 +102,13 @@ int main(int argc, char *argv[]) {
         printf("  Filename: %s\n", filename);
     } else {
         printf("Failed to parse URL\n");
+    }
+
+    result = getip(host, ip);
+    if (result == 0) {
+        printf("IP Address of %s: %s\n", host, ip);
+    } else {
+        printf("Failed to get IP address for host %s\n", host);
     }
 
     return 0;
