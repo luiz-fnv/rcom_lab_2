@@ -124,6 +124,8 @@ int ftp_read_response(int sockfd, char *response, size_t response_size) {
     memcpy(code_str, line, 3);
     int code = atoi(code_str);
 
+    sep = line[3];  
+
     /* Copy first line into response buffer */
     if ((size_t)nread >= response_size) nread = response_size - 1;
     memcpy(response, line, nread);
@@ -168,6 +170,7 @@ int ftp_login(int sockfd, const char *user, const char *password) {
     if (code < 0) {
         return -1;
     }
+    printf("Server response: %s\n", response);
     printf("Welcome code: %d\n", code);
     
     // Send USER command
@@ -213,6 +216,63 @@ int ftp_login(int sockfd, const char *user, const char *password) {
     return 0;
 }
 
+int ftp_passive_mode(int control_sockfd, char *ip, int *port) {
+    char response[1024];
+    int code;
+    
+    printf("\n----- Entering Passive Mode -----\n");
+    
+    // Send PASV command
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "PASV\r\n");
+    
+    if (send(control_sockfd, cmd, strlen(cmd), 0) < 0) {
+        perror("send() PASV command");
+        return -1;
+    }
+    printf("PASV command sent\n");
+    
+    // Read response
+    code = ftp_read_response(control_sockfd, response, sizeof(response));
+    if (code != 227) {
+        printf("Error: Failed to enter passive mode (code %d)\n", code);
+        return -1;
+    }
+    printf("Server response: %s\n", response);
+    
+    // Parse the response to get IP and port
+    // Format: 227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)
+    char *start = strchr(response, '(');
+    char *end = strchr(response, ')');
+    if (start == NULL || end == NULL) {
+        printf("Error: Invalid PASV response format\n");
+        return -1;
+    }
+    
+    start++; // Skip '('
+    char pasv_data[64];
+    memset(pasv_data, 0, sizeof(pasv_data));
+    strncpy(pasv_data, start, end - start);
+    
+    // Parse the comma-separated values
+    int ip1, ip2, ip3, ip4, port1, port2;
+    if (sscanf(pasv_data, "%d,%d,%d,%d,%d,%d", &ip1, &ip2, &ip3, &ip4, &port1, &port2) != 6) {
+        printf("Error: Failed to parse PASV response\n");
+        return -1;
+    }
+    
+    // Calculate the port number
+    *port = port1 * 256 + port2;
+    
+    // Construct the IP address
+    sprintf(ip, "%d.%d.%d.%d", ip1, ip2, ip3, ip4);
+    
+    printf("Passive mode activated: IP=%s, Port=%d\n", ip, *port);
+    printf("----- Passive Mode Setup Complete -----\n\n");
+    
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 
     if(argc < 2) {
@@ -255,6 +315,16 @@ int main(int argc, char *argv[]) {
     }
     printf("Logged in successfully\n");
 
+    char passive_ip[16];
+    int data_port;
+    if (ftp_passive_mode(sockfd, passive_ip, &data_port) < 0) {
+        printf("Failed to enter passive mode\n");
+        close(sockfd);
+        return 1;
+    }
+    printf("Passive mode established: IP=%s, Port=%d\n", passive_ip, data_port);
+
     close(sockfd);
+    close(data_port);
     return 0;
 }
