@@ -110,6 +110,109 @@ int connect_to_server(char *ip, int port) {
     return sockfd;
 }
 
+int ftp_read_response(int sockfd, char *response, size_t response_size) {
+    FILE *f = fdopen(sockfd, "r+");
+    char *line = NULL;
+    size_t linelen = 0;
+    ssize_t nread;
+    size_t used = 0;
+    char code_str[4] = {0};
+    char sep;
+
+    nread = getline(&line, &linelen, f);
+
+    memcpy(code_str, line, 3);
+    int code = atoi(code_str);
+
+    /* Copy first line into response buffer */
+    if ((size_t)nread >= response_size) nread = response_size - 1;
+    memcpy(response, line, nread);
+    used = nread;
+    response[used] = '\0';
+
+    /* --- If multi-line, keep reading until you see "NNN " --- */
+    if (sep == '-') {
+        while (1) {
+            nread = getline(&line, &linelen, f);
+
+            /* Append this line (truncated if needed) */
+            size_t to_copy = (used + nread < response_size)
+                               ? nread
+                               : response_size - 1 - used;
+            memcpy(response + used, line, to_copy);
+            used += to_copy;
+            response[used] = '\0';
+
+            /* Check for terminator: starts with the same "NNN " */
+            if (nread >= 4 &&
+                strncmp(line, code_str, 3) == 0 &&
+                line[3] == ' ')
+            {
+                break;
+            }
+        }
+    }
+
+    free(line);
+    return code;
+}
+
+int ftp_login(int sockfd, const char *user, const char *password) {
+    printf("\n----- Starting FTP Login Process -----\n");
+    char response[1024];
+    int code;
+    
+    // Read welcome message
+    printf("Waiting for welcome message...\n");
+    code = ftp_read_response(sockfd, response, sizeof(response));
+    if (code < 0) {
+        return -1;
+    }
+    printf("Welcome code: %d\n", code);
+    
+    // Send USER command
+    printf("\n----- Sending username -----\n");
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "USER %s\r\n", user);
+    
+    if (send(sockfd, cmd, strlen(cmd), 0) < 0) {
+        perror("send() USER command");
+        return -1;
+    }
+    printf("USER command sent\n");
+    
+    code = ftp_read_response(sockfd, response, sizeof(response));
+    if (code != 331 && code != 230) {
+        printf("Error: Username not accepted (code %d)\n", code);
+        return -1;
+    }
+    printf("Username accepted with response code: %d\n", code);
+    
+    // Send PASS command if needed (code 331)
+    if (code == 331) {
+        printf("\n----- Sending password -----\n");
+        snprintf(cmd, sizeof(cmd), "PASS %s\r\n", password);
+        
+        if (send(sockfd, cmd, strlen(cmd), 0) < 0) {
+            perror("send() PASS command");
+            return -1;
+        }
+        printf("PASS command sent\n");
+        
+        code = ftp_read_response(sockfd, response, sizeof(response));
+        if (code != 230) {
+            printf("Error: Password not accepted (code %d)\n", code);
+            return -1;
+        }
+        printf("Password accepted with response code: %d\n", code);
+    } else {
+        printf("No password required (already logged in with response code: %d)\n", code);
+    }
+    
+    printf("----- Login process completed successfully -----\n\n");
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 
     if(argc < 2) {
@@ -143,8 +246,15 @@ int main(int argc, char *argv[]) {
         printf("Failed to connect to server %s on port 21\n", ip);
     } else {
         printf("Connected to server %s on port 21\n", ip);
-        close(sockfd); // Close the socket after use
     }
 
+    if (ftp_login(sockfd, user, password) < 0) {
+        printf("Failed to login to FTP server\n");
+        close(sockfd);
+        return 1;
+    }
+    printf("Logged in successfully\n");
+
+    close(sockfd);
     return 0;
 }
