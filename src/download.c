@@ -273,6 +273,103 @@ int ftp_passive_mode(int control_sockfd, char *ip, int *port) {
     return 0;
 }
 
+int ftp_retrieve_file(int control_sockfd, int data_sockfd, const char *path, const char *filename) {
+    char response[1024];
+    int code;
+    
+    printf("\n----- Retrieving File -----\n");
+
+    FILE *file = fopen(filename, "wb");
+    if (file == NULL) {
+        perror("fopen");
+        return -1;
+    }
+    printf("Local file opened for writing: %s\n", filename);
+    
+    // Send RETR command with the file path
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "RETR %s\r\n", path);
+    
+    if (send(control_sockfd, cmd, strlen(cmd), 0) < 0) {
+        perror("send() RETR command");
+        fclose(file);
+        return -1;
+    }
+    printf("RETR command sent: %s", cmd);
+    
+    // Read response to RETR command
+    code = ftp_read_response(control_sockfd, response, sizeof(response));
+    if (code != 150 && code != 125) {
+        printf("Error: Failed to start file transfer (code %d)\n", code);
+        printf("Server response: %s\n", response);
+        fclose(file);
+        return -1;
+    }
+    printf("Server response: %s\n", response);
+ 
+    // Retrieve file data from data socket
+    printf("Starting file transfer...\n");
+    
+    char buffer[4096];
+    ssize_t bytes_read;
+    size_t total_bytes = 0;
+    
+    while ((bytes_read = read(data_sockfd, buffer, sizeof(buffer))) > 0) {
+        fwrite(buffer, 1, bytes_read, file);
+        total_bytes += bytes_read;
+        printf("\rReceived %zu bytes...", total_bytes);
+        fflush(stdout);  // Ensure the progress is displayed
+    }
+    
+    printf("\nTransfer complete. Total bytes received: %zu\n", total_bytes);
+    fclose(file);
+    
+    // Close the data socket to signal we're done receiving
+    close(data_sockfd);
+    
+    // After data transfer is complete, read the server's confirmation
+    code = ftp_read_response(control_sockfd, response, sizeof(response));
+    if (code != 226) {
+        printf("Warning: Unexpected response after transfer (code %d)\n", code);
+        printf("Server response: %s\n", response);
+        return -1;
+    }
+    printf("Server confirmed successful transfer: %s\n", response);
+    printf("----- File Retrieval Complete -----\n\n");
+    
+    return 0;
+}
+
+int ftp_quit(int sockfd) {
+    char response[1024];
+    int code;
+    
+    printf("\n----- Closing FTP Connection -----\n");
+    
+    // Send QUIT command
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "QUIT\r\n");
+    
+    if (send(sockfd, cmd, strlen(cmd), 0) < 0) {
+        perror("send() QUIT command");
+        return -1;
+    }
+    printf("QUIT command sent\n");
+    
+    // Read response to QUIT command
+    code = ftp_read_response(sockfd, response, sizeof(response));
+    if (code != 221) {
+        printf("Warning: Unexpected response to QUIT (code %d)\n", code);
+        printf("Server response: %s\n", response);
+        return -1;
+    }
+    
+    printf("Server confirmed disconnection: %s\n", response);
+    printf("----- FTP Connection Closed -----\n\n");
+    
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
 
     if(argc < 2) {
@@ -322,9 +419,23 @@ int main(int argc, char *argv[]) {
         close(sockfd);
         return 1;
     }
-    printf("Passive mode established: IP=%s, Port=%d\n", passive_ip, data_port);
 
+    int data_socket = connect_to_server(passive_ip, data_port);
+    if (data_socket < 0) {
+        printf("Failed to connect to data channel at %s:%d\n", passive_ip, data_port);
+        close(sockfd);
+        return 1;
+    }
+    printf("Data connection established\n");
+
+    if (ftp_retrieve_file(sockfd, data_socket, path, filename) < 0) {
+        printf("Failed to retrieve file\n");
+        close(sockfd);
+        return 1;
+    }
+    printf("File %s downloaded successfully\n", filename);
+
+    ftp_quit(sockfd);
     close(sockfd);
-    close(data_port);
     return 0;
 }
